@@ -25,8 +25,11 @@ dependencies:
   saver_gallery: ^3.0.6
   video_player: ^2.8.3        # phát video
   image_picker: ^1.0.7     # đã có, đảm bảo đúng version
-
-
+  uuid: ^4.3.3
+  flutter_screen_recording: ^2.0.0
+  video_thumbnail: ^0.5.3
+  shared_preferences: ^2.2.2
+## thêm cấu hình 
 
 
 
