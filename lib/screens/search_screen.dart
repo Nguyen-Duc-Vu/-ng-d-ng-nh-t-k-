@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/diary_entry.dart';
 import '../services/hive_service.dart';
 import 'detail_screen.dart';
-//Tìm kiếm bài nhật ký theo từ khóa
+
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
 
@@ -21,27 +21,95 @@ class _SearchScreenState extends State<SearchScreen> {
     super.dispose();
   }
 
-  void _search(String keyword) {
-    // Load lại mỗi lần gõ để có dữ liệu mới nhất
+  // ✅ Tìm kiếm thông minh: keyword + ngày/tháng/năm
+  void _search(String raw) {
+    final keyword = raw.trim();
     final all = HiveService.getAllEntries();
+
     setState(() {
       _hasSearched = keyword.isNotEmpty;
-      _filtered = keyword.isEmpty
-          ? []
-          : all.where((e) {
-        final k = keyword.toLowerCase();
-        return e.title.toLowerCase().contains(k) ||
-            e.content.toLowerCase().contains(k);
-      }).toList();
+      if (!_hasSearched) {
+        _filtered = [];
+        return;
+      }
+
+      _filtered = all.where((e) => _matches(e, keyword)).toList()
+        ..sort((a, b) => b.date.compareTo(a.date)); // mới nhất lên đầu
     });
   }
 
-  String _formatDate(DateTime d) {
-    const months = [
-      'Th1','Th2','Th3','Th4','Th5','Th6',
-      'Th7','Th8','Th9','Th10','Th11','Th12'
+  bool _matches(DiaryEntry e, String keyword) {
+    final k = keyword.toLowerCase();
+    final d = e.date;
+
+    // ── 1. Khớp tiêu đề / nội dung ──────────────────────────────
+    if (e.title.toLowerCase().contains(k)) return true;
+    if (e.content.toLowerCase().contains(k)) return true;
+
+    // ── 2. Định dạng "dd/mm" hoặc "dd/mm/yyyy" ──────────────────
+    //    VD: "17/4", "17/04", "17/4/2025"
+    final slashParts = keyword.split('/');
+    if (slashParts.length == 2) {
+      final day   = int.tryParse(slashParts[0]);
+      final month = int.tryParse(slashParts[1]);
+      if (day != null && month != null) {
+        return d.day == day && d.month == month;
+      }
+    }
+    if (slashParts.length == 3) {
+      final day   = int.tryParse(slashParts[0]);
+      final month = int.tryParse(slashParts[1]);
+      final year  = int.tryParse(slashParts[2]);
+      if (day != null && month != null && year != null) {
+        return d.day == day && d.month == month && d.year == year;
+      }
+    }
+
+    // ── 3. Số đơn: khớp ngày HOẶC tháng HOẶC năm ───────────────
+    //    VD: "4" → ngày 4 hoặc tháng 4
+    //        "2025" → năm 2025
+    final num = int.tryParse(keyword);
+    if (num != null) {
+      if (num >= 1 && num <= 31 && d.day == num)   return true;
+      if (num >= 1 && num <= 12 && d.month == num) return true;
+      if (num > 1000 && d.year == num)             return true;
+    }
+
+    // ── 4. Tên tháng tiếng Việt ──────────────────────────────────
+    //    VD: "tháng 4", "tháng tư"
+    const monthNames = [
+      'tháng 1','tháng 2','tháng 3','tháng 4',
+      'tháng 5','tháng 6','tháng 7','tháng 8',
+      'tháng 9','tháng 10','tháng 11','tháng 12',
     ];
-    return '${d.day} ${months[d.month - 1]}, ${d.year}';
+    const monthNamesWord = [
+      'tháng giêng','tháng hai','tháng ba','tháng tư',
+      'tháng năm','tháng sáu','tháng bảy','tháng tám',
+      'tháng chín','tháng mười','tháng mười một','tháng mười hai',
+    ];
+    for (int i = 0; i < 12; i++) {
+      if (k == monthNames[i] || k == monthNamesWord[i]) {
+        return d.month == i + 1;
+      }
+    }
+
+    // ── 5. Thứ trong tuần ────────────────────────────────────────
+    const weekdays = [
+      'thứ hai','thứ ba','thứ tư','thứ năm',
+      'thứ sáu','thứ bảy','chủ nhật',
+    ];
+    for (int i = 0; i < weekdays.length; i++) {
+      if (k == weekdays[i]) {
+        return d.weekday == i + 1;
+      }
+    }
+
+    return false;
+  }
+
+  String _formatDate(DateTime d) {
+    const weekdays = ['Thứ Hai','Thứ Ba','Thứ Tư','Thứ Năm','Thứ Sáu','Thứ Bảy','Chủ Nhật'];
+    return '${weekdays[d.weekday - 1]}, ${d.day}/${d.month}/${d.year}';
   }
 
   @override
@@ -64,14 +132,15 @@ class _SearchScreenState extends State<SearchScreen> {
       ),
       body: Column(
         children: [
+          // ── Search bar ──
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             child: TextField(
               controller: _controller,
               onChanged: _search,
               autofocus: false,
               decoration: InputDecoration(
-                hintText: 'Tìm kiếm nhật ký...',
+                hintText: 'Tiêu đề, nội dung, ngày, tháng...',
                 prefixIcon: const Icon(Icons.search_rounded,
                     color: Color(0xFFB5835A)),
                 suffixIcon: _controller.text.isNotEmpty
@@ -101,12 +170,31 @@ class _SearchScreenState extends State<SearchScreen> {
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(14),
-                  borderSide: const BorderSide(
-                      color: Color(0xFFB5835A), width: 1.5),
+                  borderSide:
+                  const BorderSide(color: Color(0xFFB5835A), width: 1.5),
                 ),
               ),
             ),
           ),
+
+          // ── Số kết quả ──
+          if (_hasSearched && _filtered.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '${_filtered.length} bài viết',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                  ),
+                ),
+              ),
+            ),
+
+          // ── Kết quả ──
           Expanded(
             child: !_hasSearched
                 ? _buildIdleState()
@@ -115,12 +203,11 @@ class _SearchScreenState extends State<SearchScreen> {
                 : ListView.builder(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               itemCount: _filtered.length,
-              itemBuilder: (_, i) =>
-                  _SearchCard(
-                    entry: _filtered[i],
-                    formatDate: _formatDate,
-                    isDark: isDark,
-                  ),
+              itemBuilder: (_, i) => _SearchCard(
+                entry: _filtered[i],
+                formatDate: _formatDate,
+                isDark: isDark,
+              ),
             ),
           ),
         ],
@@ -129,17 +216,17 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _buildIdleState() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.search_rounded,
-              size: 64, color: Colors.grey.shade300),
+          Icon(Icons.search_rounded, size: 64, color: Colors.grey.shade300),
           const SizedBox(height: 12),
           Text(
-            'Nhập từ khóa để tìm kiếm',
-            style: TextStyle(
-                fontSize: 15, color: Colors.grey.shade400),
+            'Tìm theo tiêu đề, nội dung\nhoặc gõ "17/4", "tháng 4"...',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 15, color: Colors.grey.shade400),
           ),
         ],
       ),
@@ -156,8 +243,7 @@ class _SearchScreenState extends State<SearchScreen> {
           const SizedBox(height: 12),
           Text(
             'Không tìm thấy kết quả',
-            style: TextStyle(
-                fontSize: 15, color: Colors.grey.shade400),
+            style: TextStyle(fontSize: 15, color: Colors.grey.shade400),
           ),
         ],
       ),
@@ -165,6 +251,7 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 }
 
+// ── Card kết quả ─────────────────────────────────────────────────────────────
 class _SearchCard extends StatelessWidget {
   final DiaryEntry entry;
   final String Function(DateTime) formatDate;
@@ -185,58 +272,79 @@ class _SearchCard extends StatelessWidget {
       ),
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: isDark ? const Color(0xFF2A2420) : Colors.white,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: isDark
                 ? Colors.white.withValues(alpha: 0.06)
                 : const Color(0xFFEDE5D8),
           ),
         ),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(entry.mood,
-                style: const TextStyle(fontSize: 28)),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
+            // ── Ảnh thumbnail nếu có ──
+            if (entry.imagePath != null)
+              ClipRRect(
+                borderRadius:
+                const BorderRadius.vertical(top: Radius.circular(16)),
+                child: Image.asset(
+                  entry.imagePath!,
+                  height: 140,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                ),
+              ),
+
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    entry.title,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 14,
-                      color: isDark
-                          ? Colors.white
-                          : const Color(0xFF2C1810),
+                  Text(entry.mood, style: const TextStyle(fontSize: 28)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          entry.title,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                            color: isDark
+                                ? Colors.white
+                                : const Color(0xFF2C1810),
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          formatDate(entry.date),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: const Color(0xFFB5835A)
+                                .withValues(alpha: 0.8),
+                          ),
+                        ),
+                        if (entry.content.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            entry.content,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade500,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ],
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 3),
-                  Text(
-                    formatDate(entry.date),
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: const Color(0xFFB5835A)
-                          .withValues(alpha: 0.8),
-                    ),
-                  ),
-                  if (entry.content.isNotEmpty) ...[
-                    const SizedBox(height: 3),
-                    Text(
-                      entry.content,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey.shade500,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
                 ],
               ),
             ),
